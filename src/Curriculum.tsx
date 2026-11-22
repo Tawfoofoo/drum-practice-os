@@ -1,3 +1,99 @@
+import { useEffect, useRef, useState } from 'react';
+import { parseMidi, drumName, type MidiPattern } from './midi';
+
+type Lesson = { id: string; title: string; description: string; patternIds: string[] };
+type Course = { id: string; title: string; lessons: Lesson[] };
+const COURSE_KEY = 'drum.curriculum.v2';
+const MIDI_KEY = 'drum.midi.v2';
+const uid = () => globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+
+function stored<T>(key: string, fallback: T): T {
+  try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) as T : fallback; }
+  catch { return fallback; }
+}
+
+type Head = 'oval' | 'cross' | 'circle-cross' | 'diamond' | 'open-diamond';
+const HEADS: Record<number, { y: number; head: Head }> = {
+  35: { y: 105, head: 'oval' }, 36: { y: 105, head: 'oval' },
+  37: { y: 81, head: 'cross' }, 38: { y: 81, head: 'oval' },
+  39: { y: 81, head: 'cross' }, 40: { y: 81, head: 'oval' },
+  41: { y: 99, head: 'oval' }, 43: { y: 93, head: 'oval' },
+  45: { y: 87, head: 'oval' }, 47: { y: 75, head: 'oval' },
+  48: { y: 69, head: 'oval' }, 50: { y: 63, head: 'oval' },
+  42: { y: 63, head: 'cross' }, 44: { y: 117, head: 'cross' },
+  46: { y: 51, head: 'circle-cross' }, 49: { y: 51, head: 'cross' },
+  51: { y: 63, head: 'cross' }, 52: { y: 51, head: 'circle-cross' },
+  53: { y: 63, head: 'diamond' }, 55: { y: 51, head: 'open-diamond' },
+  57: { y: 45, head: 'cross' }, 59: { y: 63, head: 'cross' }
+};
+const cymbalPitches = new Set([42, 44, 46, 49, 51, 52, 53, 55, 57, 59]);
+const nameOverride: Record<number, string> = {
+  39: 'Hand Clap', 41: 'Low Tom 2', 43: 'Floor Tom 1',
+  47: 'Mid Tom 2', 48: 'High Tom 2', 49: 'Crash 1',
+  50: 'High Tom 1', 52: 'China', 55: 'Splash', 57: 'Crash 2'
+};
+const labelFor = (pitch: number) => nameOverride[pitch] ?? drumName(pitch);
+
+function NoteHead({ x, y, kind }: { x: number; y: number; kind: Head }) {
+  if (kind === 'oval') return <ellipse cx={x} cy={y} rx={6.3} ry={4.2} transform={`rotate(-18 ${x} ${y})`} fill="currentColor" />;
+  if (kind === 'diamond' || kind === 'open-diamond') {
+    return <path d={`M ${x} ${y - 6} L ${x + 6} ${y} L ${x} ${y + 6} L ${x - 6} ${y} Z`}
+      fill={kind === 'diamond' ? 'currentColor' : 'white'} stroke="currentColor" strokeWidth="1.5" />;
+  }
+  return <g fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+    {kind === 'circle-cross' && <circle cx={x} cy={y} r="8.2" strokeWidth="1.2" />}
+    <path d={`M ${x - 5} ${y - 5} L ${x + 5} ${y + 5} M ${x + 5} ${y - 5} L ${x - 5} ${y + 5}`} />
+  </g>;
+}
+
+function Score({ pattern }: { pattern: MidiPattern }) {
+  const ppq = Math.max(1, pattern.ppq);
+  const barTicks = Math.max(1, ppq * pattern.numerator * 4 / pattern.denominator);
+  const lastTick = pattern.notes.reduce((m, n) => Math.max(m, n.tick + Math.max(1, n.duration)), 0);
+  const totalBars = Math.max(1, Math.ceil(lastTick / barTicks));
+  const visibleBars = Math.min(16, totalBars);
+  const barsPerRow = 2;
+  const rowHeight = 160;
+  const barWidth = 330;
+  const left = 64;
+  const width = left + barsPerRow * barWidth + 22;
+  const height = Math.ceil(visibleBars / barsPerRow) * rowHeight + 18;
+  const staffLines = [63, 75, 87, 99, 111];
+  const xAt = (tick: number, column: number, start: number) =>
+    left + column * barWidth + 24 + ((tick - start) / barTicks) * (barWidth - 48);
+
+  return <div className="score-scroll" style={{ overflowX: 'auto', maxWidth: '100%' }}>
+    <svg viewBox={`0 0 ${width} ${height}`} width={width} role="img" aria-label={`Drum score: ${pattern.name}`} style={{ display: 'block', color: '#202020', background: '#fff', borderRadius: 8 }}>
+      {Array.from({ length: visibleBars }, (_, barIndex) => {
+        const row = Math.floor(barIndex / barsPerRow);
+        const column = barIndex % barsPerRow;
+        const dy = row * rowHeight;
+        const start = barIndex * barTicks;
+        const end = start + barTicks;
+        const notes = pattern.notes.filter(n => n.tick >= start && n.tick < end);
+        const xStart = left + column * barWidth;
+        const groups = new Map<number, typeof notes>();
+        notes.forEach(n => groups.set(n.tick, [...(groups.get(n.tick) ?? []), n]));
+        const events = [...groups.entries()].sort((a, b) => a[0] - b[0]);
+        // Beams connect consecutive eighth-note cymbal attacks inside each beat.
+        const beamPairs: Array<[number, number]> = [];
+        for (let i = 0; i < events.length - 1; i++) {
+          const [t1, n1] = events[i];
+          const [t2, n2] = events[i + 1];
+          const eighth = ppq / 2;
+          const sameBeat = Math.floor((t1 - start) / ppq) === Math.floor((t2 - start) / ppq);
+          if (Math.abs(t2 - t1 - eighth) < 0.01 && sameBeat &&
+              n1.some(n => cymbalPitches.has(n.pitch) && n.pitch !== 44) &&
+              n2.some(n => cymbalPitches.has(n.pitch) && n.pitch !== 44)) {
+            beamPairs.push([t1, t2]);
+          }
+        }
+        const beamed = new Set(beamPairs.flat());
+        return <g key={barIndex} transform={`translate(0 ${dy})`}>
+          {staffLines.map(y => <line key={y} x1={xStart} x2={xStart + barWidth} y1={y} y2={y} stroke="#777" strokeWidth="1" />)}
+          <line x1={xStart} x2={xStart} y1={63} y2={111} stroke="#777" />
+          <line x1={xStart + barWidth} x2={xStart + barWidth} y1={63} y2={111} stroke="#777" />
+          <text x={xStart + 7} y={49} fontSize="12" fill="#555">{barIndex + 1}</text>
           {barIndex === 0 && <text x={xStart + 7} y={84} fontSize="13" fontWeight="bold">{pattern.numerator}/{pattern.denominator}</text>}
           {events.flatMap(([tick, atTick]) => {
             const x = xAt(tick, column, start);
