@@ -210,3 +210,81 @@
     padding: 10px;
   }
 }
+
+/* V2 Curriculum compatibility fixes */
+
+.score-scroll {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  background: #101a2b;
+  border: 1px solid #34445e;
+  border-radius: 12px;
+  padding: 12px;
+  margin: 14px 0;
+}
+
+.score-scroll svg {
+  display: block;
+  max-width: none;
+  color: #edf2fa;
+}
+
+.score-scroll .hint {
+  margin: 12px 0 0;
+}
+
+.course-box {
+  background: #101a2b;
+  border: 1px solid #34445e;
+  border-radius: 14px;
+  padding: 16px;
+  margin: 14px 0;
+  min-width: 0;
+}
+
+.course-box .section-head {
+  margin-top: 0;
+}
+
+.lesson-box {
+  background: #18263c;
+  border-left: 3px solid #80aafa;
+  border-radius: 0 12px 12px 0;
+  padding: 14px;
+  margin: 12px 0;
+  min-width: 0;
+}
+
+.lesson-box strong {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.lesson-box select,
+.lesson-box textarea {
+  max-width: 100%;
+}
+
+@media (max-width: 600px) {
+  .course-box {
+    padding: 12px;
+  }
+
+  .lesson-box {
+    padding: 12px;
+  }
+
+  .score-scroll {
+    padding: 8px;
+  }
+
+  .nav button {
+    min-width: 0;
+    flex: 1;
+    padding: 7px 3px;
+    font-size: 10px;
+  }
+}
